@@ -1,0 +1,21 @@
+[package]
+name = "blog2"
+version = "0.1.0"
+edition = "2021"
+include = ["schema.sql"]
+
+[build-dependencies]
+tokio = { version = "*", features = ["macros"] }
+sqlx = { version = "*", features = ["runtime-tokio", "sqlite"] }
+
+[dependencies]
+futures-util = "*"
+pulldown-cmark = { version = "0.12.1", features = ["html"], default-features = false }
+serde = { version = "*", features = ["derive"] }
+sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite"] }
+tera = "1.20.0"
+time = { version = "*", features = ["serde", "formatting", "parsing"] }
+tokio = { version = "*", features = ["macros"] }
+toml = "0.8.19"
+url = { version = "*", features = ["serde"] }
+warp = { version = "0.3.7", default-features = false }

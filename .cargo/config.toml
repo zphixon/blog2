@@ -1,0 +1,4 @@
+[env]
+# these must point to the same file
+DATABASE_URL = "sqlite://schema.db"
+SCHEMA_DB_FILE = { value = "schema.db", relative = true }

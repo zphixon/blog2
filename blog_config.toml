@@ -1,0 +1,7 @@
+[db]
+sqlite_file = "schema.db"
+
+[net]
+bind = "127.0.0.1:30303"
+proto_host = "https://grape.surgery"
+base_path = "/blog"
