@@ -12,9 +12,10 @@ sqlx = { version = "*", features = ["runtime-tokio", "sqlite"] }
 anyhow = { version = "1.0.89", features = ["backtrace"] }
 env_logger = "0.11.5"
 futures-util = "*"
-indexmap = "2.5.0"
+indexmap = { version = "2.5.0", features = ["serde"] }
 pulldown-cmark = { version = "0.12.1", features = ["html"], default-features = false }
 serde = { version = "*", features = ["derive"] }
+serde_json = "1.0.128"
 slug = "0.1.6"
 sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite", "time"] }
 tera = "1.20.0"

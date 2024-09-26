@@ -4,4 +4,4 @@ sqlite_file = "schema.db"
 [net]
 bind = "0.0.0.0:30303"
 proto_host = "https://grape.surgery"
-base_path = "/blog"
+base_path = "blog"

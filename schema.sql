@@ -1,11 +1,12 @@
 DROP TABLE IF EXISTS blog;
 
 CREATE TABLE blog (
-    slug TEXT PRIMARY KEY,
+    slug TEXT PRIMARY KEY NOT NULL,
     published DATETIME NOT NULL,
     title TEXT,
     last_updated DATETIME,
     author TEXT,
+    draft BOOLEAN,
     -- tags
     -- taxonomies? idk what that is even
     markdown_content TEXT
@@ -17,6 +18,7 @@ INSERT INTO blog VALUES (
     "example title",
     NULL,
     "me",
+    FALSE,
     "# example blog post
 
 what's[^unknown] up[^1]
