@@ -1,7 +1,10 @@
-use std::{ops::Deref, path::{Path, PathBuf}};
 use serde::{de::Visitor, Deserialize};
+use std::{
+    net::SocketAddr,
+    ops::Deref,
+    path::{Path, PathBuf},
+};
 use url::Url;
-
 
 #[derive(Deserialize, Debug)]
 pub struct DbConfig {
@@ -12,6 +15,7 @@ pub struct DbConfig {
 pub struct NetConfig {
     pub proto_host: Url,
     pub base_path: String,
+    pub bind: SocketAddr,
 }
 
 #[derive(Deserialize, Debug)]

@@ -2,9 +2,9 @@ DROP TABLE IF EXISTS blog;
 
 CREATE TABLE blog (
     slug TEXT PRIMARY KEY,
+    published DATETIME NOT NULL,
     title TEXT,
-    published TEXT NOT NULL,
-    last_updated TEXT,
+    last_updated DATETIME,
     author TEXT,
     -- tags
     -- taxonomies? idk what that is even
@@ -13,16 +13,34 @@ CREATE TABLE blog (
 
 INSERT INTO blog VALUES (
     "2024-09-25-example-title",
-    "example title",
     datetime(),
+    "example title",
     NULL,
     "me",
     "# example blog post
 
-what's up[^1]
+what's[^unknown] up[^1]
 
 [a link](https://grape.surgery/blog/asdf)
 
-[^1]: this is a footnote...
+[a link later on][guh]
+
+this para [has] [two] shortcuts?
+
+# two
+
+<zphixon@gmail.com>
+
+[@another-blog-page]
+
+hmm
+
+[^1]: ref within footnote?[^hmm] maybe [link within footnote](google.com)
+[^unreferenced]: bruh
+[^hmm]: sqeaps
+
+[guh]: https://egg.surgery/
+
+[two]: /hm
 "
 );
