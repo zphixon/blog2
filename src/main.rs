@@ -1,119 +1,110 @@
+use axum::{
+    extract::{rejection::{FormRejection, JsonRejection}, FromRequest, State as AxumState},
+    http::StatusCode,
+    response::IntoResponse,
+    Form, Router,
+};
 use futures_util::TryStreamExt;
 use indexmap::IndexMap;
 use serde::Serialize;
 use sqlx::{Pool, SqlitePool};
 use std::{fmt::Display, sync::Arc};
-use tokio::sync::RwLock;
-use warp::{
-    http::{Response, StatusCode},
-    reject::Rejection,
-    Filter,
-};
+use tokio::{net::TcpListener, sync::RwLock};
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod model;
 mod page;
 
-fn four_hundred(err: impl Display) -> Response<String> {
-    Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(format!("{}", err))
-        .unwrap()
+async fn ensure_slug_not_cached(
+    state: State,
+    db_page: &model::DbPage,
+) -> Result<(), model::ApiError> {
+    if state.cache.read().await.contains_key(&db_page.slug) {
+        return Err(model::ApiError::Database(model::DbError::SlugExists(
+            db_page.slug.clone(),
+        )));
+    }
+
+    Ok(())
 }
 
-fn five_hundred(err: impl Display) -> Response<String> {
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(format!("{}", err))
-        .unwrap()
-}
+async fn saturate(
+    db_page: model::DbPage,
+    state: State,
+    do_cache: bool,
+) -> Result<model::ApiError, model::ApiError> {
+    if do_cache {
+        ensure_slug_not_cached(state.clone(), &db_page).await?;
+    }
 
-macro_rules! try_or_500 {
-    ($e:expr) => {
-        try_or_500!($e, five_hundred)
-    };
+    let (page, errors) = db_page.into();
 
-    ($e:expr, $wrap:ident) => {
-        match $e.map_err($wrap) {
-            Ok(ok) => ok,
-            Err(err) => return err,
+    let mut errors: Vec<model::ApiError> =
+        errors.into_iter().map(model::ApiError::Markdown).collect();
+    for linked_slug in page.linked_slugs.iter() {
+        if !state.cache.read().await.contains_key(linked_slug) {
+            errors.push(model::ApiError::Content(page::ContentError::UnknownSlug(
+                linked_slug.clone(),
+            )));
         }
-    };
-}
+    }
 
-macro_rules! try_or_ok_500 {
-    ($e:expr) => {
-        try_or_ok_500!($e, five_hundred)
-    };
-
-    ($e:expr, $wrap:ident) => {
-        match $e.map_err($wrap) {
-            Ok(ok) => ok,
-            Err(err) => return Ok(err),
-        }
-    };
-}
-
-async fn saturate(db_page: model::database::DbPage, state: State) -> Response<String> {
-    let (page, errors) = db_page.saturate();
-    let response_json = try_or_500!(serde_json::to_string(&model::network::PublishResponse {
-        page: &page,
+    let response = model::ApiError::Publish(model::PublishResponse {
+        page: page.clone(),
         errors,
-    }));
+    });
 
-    {
+    if do_cache {
         state.cache.write().await.insert(page.slug.clone(), page);
     }
 
-    Response::builder()
-        .header("Content-Type", "application/json")
-        .status(StatusCode::CREATED)
-        .body(response_json)
-        .unwrap()
+    Ok(response)
 }
 
-async fn post_publish(db_page: model::database::DbPage, state: State) -> Response<String> {
-    if state.cache.read().await.contains_key(&db_page.slug) {
-        return four_hundred(format!("page with slug {} already exists", db_page.slug));
-    }
+async fn post_publish(form: String, state: State) -> Result<model::ApiError, model::ApiError> {
+    let form = serde_urlencoded::from_str::<model::PublishForm>(&form)?;
+    let db_page = form.into();
 
-    try_or_500!(
-        sqlx::query!(
-            "INSERT INTO blog (slug, draft, published, title, author, markdown_content) VALUES (?, ?, datetime(?), ?, ?, ?)",
-            db_page.slug,
-            db_page.draft,
-            db_page.published,
-            db_page.title,
-            db_page.author,
-            db_page.markdown_content,
-        )
-        .execute(&state.pool)
-        .await
-    );
+    ensure_slug_not_cached(state.clone(), &db_page).await?;
 
-    saturate(db_page, state).await
+    sqlx::query!(
+        "INSERT INTO blog (slug, draft, published, title, author, markdown_content) VALUES (?, ?, datetime(?), ?, ?, ?)",
+        db_page.slug,
+        db_page.draft,
+        db_page.published,
+        db_page.title,
+        db_page.author,
+        db_page.markdown_content,
+    )
+    .execute(&state.pool)
+    .await?;
+
+    saturate(db_page, state, true).await
 }
 
-async fn put_publish(db_page: model::database::DbPage, state: State) -> Response<String> {
+async fn put_publish(form_str: String, state: State) -> Result<model::ApiError, model::ApiError> {
+    let form = serde_urlencoded::from_str::<model::PublishForm>(&form_str)?;
+    let db_page: model::DbPage = form.into();
+
     if !state.cache.read().await.contains_key(&db_page.slug) {
-        return post_publish(db_page, state).await;
+        return post_publish(form_str, state).await;
     }
 
-    try_or_500!(
-        sqlx::query!(
-            "UPDATE blog SET (draft, published, title, author, markdown_content) = (?, datetime(?), ?, ?, ?) WHERE slug = ?",
-            db_page.draft,
-            db_page.published,
-            db_page.title,
-            db_page.author,
-            db_page.markdown_content,
-            db_page.slug,
-        )
-        .execute(&state.pool)
-        .await
-    );
+    sqlx::query!(
+        "UPDATE blog SET (draft, published, title, author, markdown_content) = (?, datetime(?), ?, ?, ?) WHERE slug = ?",
+        db_page.draft,
+        db_page.published,
+        db_page.title,
+        db_page.author,
+        db_page.markdown_content,
+        db_page.slug,
+    )
+    .execute(&state.pool)
+    .await?;
 
-    saturate(db_page, state).await
+    saturate(db_page, state, true).await
 }
 
 #[derive(Clone)]
@@ -122,33 +113,79 @@ struct State {
     cache: Arc<RwLock<IndexMap<String, page::Page>>>,
 }
 
-// prefer auto-implemented Send and Sync
-//unsafe impl Send for State {}
-//unsafe impl Sync for State {}
+#[derive(FromRequest)]
+#[from_request(via(axum::Json), rejection(model::ApiError))]
+struct MyJson<T>(T);
 
-fn with_state<S: Clone + Send + Sync>(
-    state: S,
-) -> impl Filter<Extract = (S,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || state.clone())
-}
-
-fn with_base_path(base_path: &'static str) -> impl Filter<Extract = (), Error = Rejection> + Clone {
-    if base_path.is_empty() {
-        warp::any().boxed()
-    } else {
-        warp::path(base_path).boxed()
+impl<T: Serialize> IntoResponse for MyJson<T> {
+    fn into_response(self) -> axum::response::Response {
+        let Self(value) = self;
+        axum::Json(value).into_response()
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
+impl From<JsonRejection> for model::ApiError {
+    fn from(value: JsonRejection) -> Self {
+        model::ApiError::Serde(format!("{}", value))
+    }
+}
+
+impl IntoResponse for model::ApiError {
+    fn into_response(self) -> axum::response::Response {
+        (
+            StatusCode::IM_A_TEAPOT,
+            axum::Json(serde_json::json!({
+                "hello": "world"
+            })),
+        )
+            .into_response()
+    }
+}
+
+
+
+#[derive(FromRequest)]
+#[from_request(via(axum::Form), rejection(model::ApiError))]
+struct MyForm<T>(T);
+
+impl<T: Serialize> IntoResponse for MyForm<T> {
+    fn into_response(self) -> axum::response::Response {
+        let Self(value) = self;
+        axum::Json(value).into_response()
+    }
+}
+
+impl From<FormRejection> for model::ApiError {
+    fn from(value: FormRejection) -> Self {
+        model::ApiError::Serde(format!("{}", value))
+    }
+}
+
+
+
+
+
+
+async fn publish_post_handler(
+    AxumState(state): AxumState<State>,
+    MyForm(form): MyForm<model::PublishForm>,
+) -> Result<(), ()> {
+    tracing::debug!("{:?}", form);
+    Ok(())
+}
+
+#[tokio::main()]
 async fn main() {
-    env_logger::init();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     let config: &'static config::Config = Box::leak(Box::new(
         toml::from_str(&std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap())
             .unwrap(),
     ));
-    println!("{:#?}", config);
+    tracing::info!("{:#?}", config);
 
     let sqlite_url = format!("sqlite://{}", config.db.sqlite_file.display())
         .replace("\\", "/")
@@ -158,41 +195,26 @@ async fn main() {
     let cache = Arc::new(RwLock::new(IndexMap::new()));
 
     {
-        let mut stream =
-            sqlx::query_as!(model::database::DbPage, "SELECT * FROM blog").fetch(&pool);
+        let mut stream = sqlx::query_as!(model::DbPage, "SELECT * FROM blog").fetch(&pool);
         while let Some(row) = stream.try_next().await.unwrap() {
             let slug = row.slug.clone();
-            let (page, _) = row.saturate();
-            println!("{:#?}", page);
+            let (page, _) = row.into();
+            tracing::debug!("{:#?}", page);
             cache.write().await.insert(slug, page);
         }
     }
 
     let state = State { pool, cache };
 
-    let post_publish_route = warp::post()
-        .and(with_base_path(&config.net.base_path))
-        .and(warp::path("publish"))
-        .and(warp::body::form())
-        .and(with_state(state.clone()))
-        .and_then(|form: model::network::PublishForm, state| async {
-            Ok::<_, Rejection>(post_publish(form.into_page(), state).await)
-        });
+    let app = Router::new()
+        .route(
+            &format!("{}/publish", config.net.url.path()),
+            axum::routing::post(publish_post_handler),
+        )
+        .layer(TraceLayer::new_for_http())
+        .with_state(state);
 
-    let put_publish_route = warp::put()
-        .and(with_base_path(&config.net.base_path))
-        .and(warp::path("publish"))
-        .and(warp::body::form())
-        .and(with_state(state.clone()))
-        .and_then(|form: model::network::PublishForm, state| async {
-            Ok::<_, Rejection>(put_publish(form.into_page(), state).await)
-        });
+    let listener = TcpListener::bind(config.net.bind).await.unwrap();
 
-    warp::serve(
-        post_publish_route
-            .or(put_publish_route)
-            .with(warp::log("asdf")),
-    )
-    .run(config.net.bind)
-    .await;
+    axum::serve(listener, app).await.unwrap();
 }

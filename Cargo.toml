@@ -9,18 +9,21 @@ tokio = { version = "*", features = ["macros"] }
 sqlx = { version = "*", features = ["runtime-tokio", "sqlite"] }
 
 [dependencies]
-anyhow = { version = "1.0.89", features = ["backtrace"] }
-env_logger = "0.11.5"
+axum = { version = "0.7.7", features = ["macros"] }
 futures-util = "*"
-indexmap = { version = "2.5.0", features = ["serde"] }
+indexmap = { version = "*", features = ["serde"] }
 pulldown-cmark = { version = "0.12.1", features = ["html"], default-features = false }
 serde = { version = "*", features = ["derive"] }
-serde_json = "1.0.128"
+serde_json = "*"
+serde_urlencoded = "*"
 slug = "0.1.6"
 sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite", "time"] }
 tera = "1.20.0"
+thiserror = "1.0.64"
 time = { version = "*", features = ["serde", "formatting", "parsing"] }
-tokio = { version = "*", features = ["macros"] }
+tokio = { version = "*", features = ["full"] }
 toml = "0.8.19"
+tower-http = { version = "*", features = ["full"] }
+tracing = "*"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "tracing-log"] }
 url = { version = "*", features = ["serde"] }
-warp = { version = "0.3.7", default-features = false }

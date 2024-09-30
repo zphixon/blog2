@@ -13,8 +13,7 @@ pub struct DbConfig {
 
 #[derive(Deserialize, Debug)]
 pub struct NetConfig {
-    pub proto_host: Url,
-    pub base_path: String,
+    pub url: Url,
     pub bind: SocketAddr,
 }
 
