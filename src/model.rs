@@ -8,21 +8,8 @@ pub enum ApiError {
     Content(crate::page::ContentError),
     Database(DbError),
     Publish(PublishResponse),
-    Serde(String),
+    InvalidJson(String),
     Sqlx(String),
-}
-
-
-impl From<serde_json::Error> for ApiError {
-    fn from(value: serde_json::Error) -> Self {
-        ApiError::Serde(value.to_string())
-    }
-}
-
-impl From<serde_urlencoded::de::Error> for ApiError {
-    fn from(value: serde_urlencoded::de::Error) -> Self {
-        ApiError::Serde(value.to_string())
-    }
 }
 
 impl From<sqlx::Error> for ApiError {
@@ -38,7 +25,6 @@ impl Display for ApiError {
         write!(f, "{:?}", self)
     }
 }
-
 
 #[derive(Deserialize, Debug)]
 pub struct PublishForm {

@@ -1,18 +1,13 @@
-use axum::{
-    extract::{rejection::{FormRejection, JsonRejection}, FromRequest, State as AxumState},
-    http::StatusCode,
-    response::IntoResponse,
-    Form, Router,
-};
+use axum::{extract::State as AxumState, Router};
 use futures_util::TryStreamExt;
 use indexmap::IndexMap;
-use serde::Serialize;
-use sqlx::{Pool, SqlitePool};
-use std::{fmt::Display, sync::Arc};
+use sqlx::SqlitePool;
+use std::sync::Arc;
 use tokio::{net::TcpListener, sync::RwLock};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod compat;
 mod config;
 mod model;
 mod page;
@@ -30,82 +25,82 @@ async fn ensure_slug_not_cached(
     Ok(())
 }
 
-async fn saturate(
-    db_page: model::DbPage,
-    state: State,
-    do_cache: bool,
-) -> Result<model::ApiError, model::ApiError> {
-    if do_cache {
-        ensure_slug_not_cached(state.clone(), &db_page).await?;
-    }
-
-    let (page, errors) = db_page.into();
-
-    let mut errors: Vec<model::ApiError> =
-        errors.into_iter().map(model::ApiError::Markdown).collect();
-    for linked_slug in page.linked_slugs.iter() {
-        if !state.cache.read().await.contains_key(linked_slug) {
-            errors.push(model::ApiError::Content(page::ContentError::UnknownSlug(
-                linked_slug.clone(),
-            )));
-        }
-    }
-
-    let response = model::ApiError::Publish(model::PublishResponse {
-        page: page.clone(),
-        errors,
-    });
-
-    if do_cache {
-        state.cache.write().await.insert(page.slug.clone(), page);
-    }
-
-    Ok(response)
-}
-
-async fn post_publish(form: String, state: State) -> Result<model::ApiError, model::ApiError> {
-    let form = serde_urlencoded::from_str::<model::PublishForm>(&form)?;
-    let db_page = form.into();
-
-    ensure_slug_not_cached(state.clone(), &db_page).await?;
-
-    sqlx::query!(
-        "INSERT INTO blog (slug, draft, published, title, author, markdown_content) VALUES (?, ?, datetime(?), ?, ?, ?)",
-        db_page.slug,
-        db_page.draft,
-        db_page.published,
-        db_page.title,
-        db_page.author,
-        db_page.markdown_content,
-    )
-    .execute(&state.pool)
-    .await?;
-
-    saturate(db_page, state, true).await
-}
-
-async fn put_publish(form_str: String, state: State) -> Result<model::ApiError, model::ApiError> {
-    let form = serde_urlencoded::from_str::<model::PublishForm>(&form_str)?;
-    let db_page: model::DbPage = form.into();
-
-    if !state.cache.read().await.contains_key(&db_page.slug) {
-        return post_publish(form_str, state).await;
-    }
-
-    sqlx::query!(
-        "UPDATE blog SET (draft, published, title, author, markdown_content) = (?, datetime(?), ?, ?, ?) WHERE slug = ?",
-        db_page.draft,
-        db_page.published,
-        db_page.title,
-        db_page.author,
-        db_page.markdown_content,
-        db_page.slug,
-    )
-    .execute(&state.pool)
-    .await?;
-
-    saturate(db_page, state, true).await
-}
+//async fn saturate(
+//    db_page: model::DbPage,
+//    state: State,
+//    do_cache: bool,
+//) -> Result<model::ApiError, model::ApiError> {
+//    if do_cache {
+//        ensure_slug_not_cached(state.clone(), &db_page).await?;
+//    }
+//
+//    let (page, errors) = db_page.into();
+//
+//    let mut errors: Vec<model::ApiError> =
+//        errors.into_iter().map(model::ApiError::Markdown).collect();
+//    for linked_slug in page.linked_slugs.iter() {
+//        if !state.cache.read().await.contains_key(linked_slug) {
+//            errors.push(model::ApiError::Content(page::ContentError::UnknownSlug(
+//                linked_slug.clone(),
+//            )));
+//        }
+//    }
+//
+//    let response = model::ApiError::Publish(model::PublishResponse {
+//        page: page.clone(),
+//        errors,
+//    });
+//
+//    if do_cache {
+//        state.cache.write().await.insert(page.slug.clone(), page);
+//    }
+//
+//    Ok(response)
+//}
+//
+//async fn post_publish(form: String, state: State) -> Result<model::ApiError, model::ApiError> {
+//    let form = serde_urlencoded::from_str::<model::PublishForm>(&form)?;
+//    let db_page = form.into();
+//
+//    ensure_slug_not_cached(state.clone(), &db_page).await?;
+//
+//    sqlx::query!(
+//        "INSERT INTO blog (slug, draft, published, title, author, markdown_content) VALUES (?, ?, datetime(?), ?, ?, ?)",
+//        db_page.slug,
+//        db_page.draft,
+//        db_page.published,
+//        db_page.title,
+//        db_page.author,
+//        db_page.markdown_content,
+//    )
+//    .execute(&state.pool)
+//    .await?;
+//
+//    saturate(db_page, state, true).await
+//}
+//
+//async fn put_publish(form_str: String, state: State) -> Result<model::ApiError, model::ApiError> {
+//    let form = serde_urlencoded::from_str::<model::PublishForm>(&form_str)?;
+//    let db_page: model::DbPage = form.into();
+//
+//    if !state.cache.read().await.contains_key(&db_page.slug) {
+//        return post_publish(form_str, state).await;
+//    }
+//
+//    sqlx::query!(
+//        "UPDATE blog SET (draft, published, title, author, markdown_content) = (?, datetime(?), ?, ?, ?) WHERE slug = ?",
+//        db_page.draft,
+//        db_page.published,
+//        db_page.title,
+//        db_page.author,
+//        db_page.markdown_content,
+//        db_page.slug,
+//    )
+//    .execute(&state.pool)
+//    .await?;
+//
+//    saturate(db_page, state, true).await
+//}
 
 #[derive(Clone)]
 struct State {
@@ -113,62 +108,9 @@ struct State {
     cache: Arc<RwLock<IndexMap<String, page::Page>>>,
 }
 
-#[derive(FromRequest)]
-#[from_request(via(axum::Json), rejection(model::ApiError))]
-struct MyJson<T>(T);
-
-impl<T: Serialize> IntoResponse for MyJson<T> {
-    fn into_response(self) -> axum::response::Response {
-        let Self(value) = self;
-        axum::Json(value).into_response()
-    }
-}
-
-impl From<JsonRejection> for model::ApiError {
-    fn from(value: JsonRejection) -> Self {
-        model::ApiError::Serde(format!("{}", value))
-    }
-}
-
-impl IntoResponse for model::ApiError {
-    fn into_response(self) -> axum::response::Response {
-        (
-            StatusCode::IM_A_TEAPOT,
-            axum::Json(serde_json::json!({
-                "hello": "world"
-            })),
-        )
-            .into_response()
-    }
-}
-
-
-
-#[derive(FromRequest)]
-#[from_request(via(axum::Form), rejection(model::ApiError))]
-struct MyForm<T>(T);
-
-impl<T: Serialize> IntoResponse for MyForm<T> {
-    fn into_response(self) -> axum::response::Response {
-        let Self(value) = self;
-        axum::Json(value).into_response()
-    }
-}
-
-impl From<FormRejection> for model::ApiError {
-    fn from(value: FormRejection) -> Self {
-        model::ApiError::Serde(format!("{}", value))
-    }
-}
-
-
-
-
-
-
 async fn publish_post_handler(
     AxumState(state): AxumState<State>,
-    MyForm(form): MyForm<model::PublishForm>,
+    compat::MyForm(form): compat::MyForm<model::PublishForm>,
 ) -> Result<(), ()> {
     tracing::debug!("{:?}", form);
     Ok(())
